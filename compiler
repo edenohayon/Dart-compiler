@@ -1,0 +1,472 @@
+
+
+PARSER_BEGIN(DartCompiler)
+
+import java.io.*;
+import java.util.*;
+
+
+public class DartCompiler {
+
+	public static String code = "";
+    public static String javaCodeStart = "";
+
+ static class Type {
+    boolean init;
+    boolean isObject;
+    int numOfVar;
+    String[] typeOfVar;
+    String[] var;
+
+    public Type(boolean init, boolean isObject, int numOfVar, String[] typeOfVar, String[] var)
+    {
+        this.init = init;
+        this.isObject = isObject;
+        this.numOfVar = numOfVar;
+        this.typeOfVar = typeOfVar;
+        this.var = var;
+    }
+}
+    
+    public static HashMap<String,Type> symtable = new HashMap<String,Type>();
+
+
+    public static void main(String[] args) {
+        DartCompiler p = null;
+	java.io.FileWriter out = null;
+        java.io.File javaTarget = null;
+        
+        System.out.println("Reading from file " + args[0]);
+        try {
+            p = new DartCompiler(new java.io.FileInputStream(args[0]));
+            javaTarget = new java.io.File(args[1]);
+            out = new java.io.FileWriter(javaTarget);
+
+        }
+        catch(java.io.FileNotFoundException e) {
+            System.out.println("Error in reading file");
+        }
+        catch(java.io.IOException e) {
+            System.out.println("Error in Writing");
+        }
+        
+        try {
+            p.Start();
+            System.out.println("Parsing was done successfully");
+			
+			javaCodeStart = "public class " + javaTarget.getName() + "{" +
+                "\npublic static void main(String[] args){\n";
+				
+			code = javaCodeStart + code + "\n" + "}" + "\n" + "}";
+			
+			try{            
+            out.write(code);
+            out.close();
+			}catch(IOException e){}
+        }
+        catch(ParseException e) {
+            System.out.println("Error in parsing");
+            System.out.println(e.getMessage());
+        }
+        catch(TokenMgrError e) {
+            System.out.println("There was an error in analyzing the code");
+            System.out.println(e.getMessage());
+        }
+    }
+
+}
+
+PARSER_END(DartCompiler)
+
+
+////	console.log(a), console.log("text"), console.log('text'), console.log()
+  //  <CONSOLE: "console.log(" ( <IDENTIFIER> ")" |  '"' <TEXT> '"' ")" | ''' <TEXT> ''' ")" | ")" ) >
+SKIP: {
+    " "
+|   "\t"
+|   "\n"
+|   "\r"
+|   <"//" (~["\n", "\r"])* ("\n" | "\r" | "\r\n")>
+}
+
+// Reserved words and operators
+TOKEN: {
+    
+	<EQUAL: "=">
+|   <COMMA: ",">
+|   <COLON: ":">
+|	<SEMI: ";">
+|   <MULT: "*">
+|   <PLUS: "+">
+|   <MINUS: "-">
+|   <DIV: "/">
+|   <LB: "(">
+|   <RB: ")">
+|   <CLB: "{">
+|   <CRB: "}">
+|   <PRINT: "print">
+|	<DEFINE: "define ">
+|	<AS: "as">
+|	<MAIN: "main()">
+|	<INT: "int">
+|	<STRING: "string">
+|	<OP8: "??=">
+|	<OP6: "??">
+
+
+}   
+
+// Identifiers etc.
+TOKEN: {
+    <#LETTER: ["a"-"z", "A"-"Z"]>
+|   <#DIGITS: ["0"-"9"]>
+|	<NUM: (<DIGITS>)+ >
+|	<#TEXT: (~["\n", "\r"])*>
+|	<STRING1: "'" (<TEXT>) "'" >
+|	<STRING2: "\""(~["\n", "\r"])* "\"" >  
+|   <IDENTIFIER: <LETTER>(<LETTER>| "_"| <DIGITS> )*>
+
+
+}
+
+
+void Start() : {String res;}
+{
+    (classDec() )*
+	res = main()
+    <EOF>
+	{code = res;}
+}
+
+void classDec() : {}
+{
+	<DEFINE> <IDENTIFIER> <AS> <CLB> 
+		(classVarDeclaration())*
+		<CRB><SEMI>
+}
+
+void classVarDeclaration() :{Token t;}
+{	
+	//int x ...
+	<INT>
+	t = <IDENTIFIER> 
+	(multDec())* <SEMI> 
+|	<STRING> <IDENTIFIER> (multDec())* <SEMI> // string y ...
+| 	<IDENTIFIER> <IDENTIFIER> (multDec())* <SEMI>
+}
+
+String main() :{String res1, res2;}
+{
+	<MAIN> <CLB> res1 = statement() res2 = statements() <CRB>   //main() { ....}
+	{return res1 + res2;}
+}
+
+String statement() :{String res;}  
+{
+    LOOKAHEAD(2) // to avoid conflict with object declaration and asign
+	res = declaration(){return res;}
+|	res = asign() {return res + ";\n";}
+| 	res = print() {return res;}
+}
+
+String statements() :{String res1, res2;}
+{
+	res1 = statement()
+	res2 =statements()
+	{return res1 + res2;}
+|	{} {return "";}
+}
+
+String declaration() :{Token t; String res;}
+{
+	<INT>
+	t =	<IDENTIFIER> { createNewInt(t.image);} 
+	res = intDec(t) {return "Integer "  + res + ";\n" ;}
+
+|	<STRING> 
+	t = <IDENTIFIER> { createNewString(t.image); } 
+	res = stringDec(t) {return "String "  + res + ";\n" ;}
+	
+	
+| 	<IDENTIFIER> <IDENTIFIER> objectDec(){return "";}
+}
+
+
+void objectDec() :{}
+{
+	(multDec())* <SEMI>	
+
+|	<EQUAL>  <IDENTIFIER> (<OP6> <IDENTIFIER>)? <SEMI> 
+|	<OP8> <NUM><SEMI> 
+}
+
+//checks if s exist and if not - create new int declaration
+void createNewInt(String s) :{}
+{
+	{
+	if(!symtable.containsKey(s))
+	{
+		String[] typeTmp = {"int"};
+		String[] varTmp = new String[1];
+		Type tmp = new Type(false,false,1,typeTmp,varTmp);
+		symtable.put(s,tmp);
+	}
+	else
+		throw new ParseException("compilaion error:" + s + " already declared");
+	}
+		
+}
+
+//checks if s exist and if not - create new int declaration
+void createNewString(String s) :{}
+{
+	{
+	if(!symtable.containsKey(s))
+	{
+		String[] typeTmp = {"string"};
+		String[] varTmp = new String[1];
+		Type tmp = new Type(false,false,1,typeTmp,varTmp);
+		symtable.put(s,tmp);
+	}
+	else
+		throw new ParseException("compilaion error:" + s + " already declared");
+	}
+		
+}
+String intDec(Token t) :{String s1;String res = "",sign; Token t1,t2,t3;}
+{
+	(  s1 = multDec(){createNewInt(s1); res += "," + s1 + "= null";} )* <SEMI>	{return t.image + "=null" + res;}
+	
+
+|	<EQUAL> {sign = t.image +  "=";}(
+	t1 = <NUM> { symtable.get(t.image).var[0] = t1.image; symtable.get(t.image).init = true; res= sign + t1.image;}
+| 	t2 = <IDENTIFIER> { checkAsigne(t.image,t2.image); res = sign + t2.image;}
+		(<OP6> t3 = <NUM> 
+		{ if(symtable.get(t2.image).init == false)
+			{ symtable.get(t.image).var[0] = t3.image;
+ 			  symtable.get(t.image).init = true;
+			  res = sign + t3.image;
+			  }})?) <SEMI>  {return  res;}  
+
+
+|	<OP8> (t2 = <NUM>{if(symtable.get(t.image).init == false)
+							{symtable.get(t.image).var[0] = t2.image;symtable.get(t.image).init = true; res = t.image + "=" + t2.image;}}
+			|t2 = <IDENTIFIER> {if(!symtable.containsKey(t2.image)) throw new ParseException("compilaion error;" + t2.image + " undefined");
+								if(!symtable.get(t2.image).typeOfVar[0].equals("int"))throw new ParseException("compilaion error: incorrect type");
+								if(symtable.get(t.image).init == false){
+									if(symtable.get(t2.image).init == true){
+										symtable.get(t.image).var[0] = symtable.get(t2.image).var[0]; symtable.get(t.image).init = true;}
+								res = t.image + "=" + t2.image;
+								}
+								}
+ )<SEMI> {return res;} 
+}
+
+//checks int x = y
+void checkAsigne(String first, String second) :{}
+{
+{
+	//if y doesnt exists
+	if(!symtable.containsKey(second))
+		throw new ParseException("compilaion error:" + second + " is undefined");
+		
+	//if y isnt int
+	else if(!symtable.get(second).typeOfVar[0].equals(symtable.get(first).typeOfVar[0]))
+		throw new ParseException("compilaion error: incorrect type");
+		
+	if(symtable.get(second).init == true)
+	{
+		symtable.get(first).var[0] = symtable.get(second).var[0];
+		symtable.get(first).init = true;
+	}
+}
+}
+
+//x,y,z....
+String multDec() :{Token t; }
+{
+	<COMMA> t = <IDENTIFIER>  {return t.image;}
+}
+
+String stringDec(Token t) :{String s1,s2,res = ""; Token t1,t2,t3;}
+{
+	(s1 = multDec() { createNewString(s1); res += "," + s1 + "=null";})* <SEMI> {return t.image + "=null" + res;}
+	
+|	 <EQUAL> (
+		t1 = <STRING2> { symtable.get(t.image).var[0] = t1.image; symtable.get(t.image).init = true; res = t.image + "=" + t1.image;}
+		|t1 = <NUM> { symtable.get(t.image).var[0] = "\"" + t1.image +"\""; symtable.get(t.image).init = true;res = t.image + "=" +"\""+ t1.image+"\"";}
+		| t1 = <IDENTIFIER> {checkAsigne(t.image,t1.image); res = t.image +"="+ t1.image;} 
+				( <OP6> ( t2 = <STRING2> {s1 = t2.image;}| t2 = <NUM> { s1 = "\"" + t2.image + "\"";}) 
+						{if(symtable.get(t1.image).init == false){
+								symtable.get(t.image).var[0] = s1;
+								symtable.get(t.image).init = true;
+								res = t.image + "=" + s1;}})?  )
+	<SEMI> {return res;}
+|	<OP8> (t3 = <STRING2> {s2 = t3.image;}| t3 = <NUM> { s2 = "\"" + t3.image + "\"";})
+						{if(symtable.get(t.image).init == false){
+								symtable.get(t.image).var[0] = s2;
+								symtable.get(t.image).init = true;
+								res = t.image + "=" + s2;}}  
+ <SEMI>{return res;}
+
+
+}
+
+String print() :{String res;}
+{
+	<PRINT> <LB> res = printType() <RB> <SEMI> {return "System.out.println(" + res + ");\n";}
+}
+ 
+String printType() :{Token t;}
+{
+	t = <IDENTIFIER> {if(!symtable.containsKey(t.image))throw new ParseException("compilaion error;" + t.image + " undefined");
+						return t.image;}
+|	t = <NUM>	{return t.image;}
+|	t = <STRING2> {return t.image;}
+}
+
+String asign() :{Token first,sign,second,third;String res = "";}
+{
+	first = <IDENTIFIER> 
+	(sign = <EQUAL>| sign = <OP8>) 
+	(second = <IDENTIFIER> { asigneIdentifierHandler(first,sign,second); res = first.image + "=" + second.image;}
+			( <OP6> 
+				(third = <STRING2> {assigeOp6Handler(first,second,"string",third);res = first.image + "=" + third.image;}|
+				third = <NUM> {assigeOp6Handler(first,second,"int",third); res = first.image + "=" + third.image;} |
+				third = <IDENTIFIER> {assigeOp6Handler(first,second,"identifier",third); res = first.image + "=" + third.image;}))?
+				
+				
+	|second = <STRING2> { asigneHandler(first,sign,second,"string"); res = first.image + "=" + second.image;}
+	
+	|second =  <NUM>  { asigneHandler(first,sign,second,"int"); if(symtable.get(first.image).typeOfVar[0].equals("string"))
+																		res = first.image + "=" +"\"" + second.image+"\"";
+																else res = first.image + "=" + second.image;})
+	<SEMI> {return res;}
+}
+
+void asigneHandler(Token firstArg, Token sign, Token secondArg, String type) :{}
+{{
+	//if first arg undefined
+	if(!symtable.containsKey(firstArg.image)) 
+		throw new ParseException("compilaion error;" + firstArg.image + " undefined");
+		
+	//if string = int
+	if((symtable.get(firstArg.image).typeOfVar[0]).equals("string") && type.equals("int"))
+	{
+		symtable.get(firstArg.image).var[0] = "\"" + secondArg.image + "\"";
+		symtable.get(firstArg.image).init = true;
+		return;
+	}
+	//if incorrect type
+	else if((symtable.get(firstArg.image).typeOfVar[0]).equals(type) == false)
+		throw new ParseException("compilaion error: incorrenct type");
+		
+	if((sign.image).equals("=") )
+	{
+		symtable.get(firstArg.image).var[0] = secondArg.image;
+		symtable.get(firstArg.image).init = true;
+		return;
+	}
+	
+	//if ??=
+	else if((sign.image).equals("??=") && symtable.get(firstArg.image).init == false)
+	{
+		symtable.get(firstArg.image).var[0] = secondArg.image;
+		symtable.get(firstArg.image).init = true;	
+	}
+}}
+
+void assigeOp6Handler(Token firstArg, Token secondArg, String type, Token thirdArg) :{}
+{{
+	if(type.equals("identifier"))
+	{
+		if(!symtable.containsKey(thirdArg.image)) 
+			throw new ParseException("compilaion error; " + thirdArg.image + " undefined");
+			
+		else if(symtable.get(firstArg.image).typeOfVar[0].equals(symtable.get(thirdArg.image).typeOfVar[0]) == false)
+			throw new ParseException("compilaion error: incorrenct type");	
+	}
+	
+	//if firstArg is String and the third is int
+	else if( (symtable.get(firstArg.image).typeOfVar[0]).equals("string") && type.equals("int") )
+	{
+
+		if(symtable.get(secondArg.image).init == false)
+			symtable.get(firstArg.image).var[0] = "\"" + thirdArg.image + "\"" ; // CHECK WHY IT PUTS 1 INSTEAD OF "1"
+		return;
+
+	}
+
+
+	//if first and thirs tokens arnt the same type
+	else if(!(type.equals(symtable.get(firstArg.image).typeOfVar[0])))
+		throw new ParseException("compilaion error: incorrenct type");
+		
+	//if secondArg is null put thirdArg
+	if(symtable.get(secondArg.image).init == false)
+		symtable.get(firstArg.image).var[0] = thirdArg.image;
+
+}}
+
+void asigneIdentifierHandler(Token t1, Token sign, Token t3) :{}
+{{
+	
+	//if first arg undefined
+	if(!symtable.containsKey(t1.image)) 
+		throw new ParseException("compilaion error;" + t1.image + " undefined");
+		
+	//if second arg undefined
+	if(!symtable.containsKey(t3.image))
+		throw new ParseException("compilaion error;" + t3.image + " undefined");
+		
+	if(symtable.get(t1.image).typeOfVar[0].equals("string") && symtable.get(t3.image).typeOfVar[0].equals("int"))
+	{
+		if((sign.image).equals("=") )
+		{
+			if(symtable.get(t3.image).init == true){
+				symtable.get(t1.image).var[0] =  "\"" + symtable.get(t3.image).var[0] + "\"";
+				symtable.get(t1.image).init = true;
+				}
+			else{
+				symtable.get(t1.image).var[0] = "null";
+				symtable.get(t1.image).init = false;
+			}
+		}
+		
+		//if ??=
+		else if((sign.image).equals("??=") && symtable.get(t1.image).init == false)
+		{
+			if(symtable.get(t3.image).init == true){
+				symtable.get(t1.image).var[0] =  "\"" + symtable.get(t3.image).var[0] + "\"";
+				symtable.get(t1.image).init = true;
+				}
+			else{
+				symtable.get(t1.image).var[0] = "null";
+				symtable.get(t1.image).init = false;
+			}
+		}
+		return;
+	}
+		
+	//if incorrect type
+	else if((symtable.get(t1.image).typeOfVar[0]).equals(symtable.get(t3.image).typeOfVar[0]) == false)
+		throw new ParseException("compilaion error: incorrenct type");
+	// if = 	
+	if((sign.image).equals("=") )
+	{
+		symtable.get(t1.image).var[0] = symtable.get(t3.image).var[0] ;
+		if(symtable.get(t3.image).init == true)
+			symtable.get(t1.image).init = true;
+		//check - maybe need to add else init = false;
+	}
+	
+	//if ??=
+	else if((sign.image).equals("??=") && symtable.get(t1.image).init == false)
+	{
+		symtable.get(t1.image).var[0] = symtable.get(t3.image).var[0] ;
+		if(symtable.get(t3.image).init == true)
+			symtable.get(t1.image).init = true;	
+	}
+		
+
+}}
